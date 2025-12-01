@@ -4,9 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Daily Remind</title>
-  <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
-  <link rel="icon" type="image/x-icon" href="favicon.png">
-
+  
   <!-- PWA -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#121212">
@@ -67,6 +65,42 @@
     body {
       min-height: max(884px, 100dvh);
     }
+    
+    /* Custom alert styles */
+    .web-alert {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+      max-width: 350px;
+      animation: slideIn 0.3s ease-out;
+    }
+    
+    @keyframes slideIn {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    
+    .web-alert.hide {
+      animation: slideOut 0.3s ease-in;
+    }
+    
+    @keyframes slideOut {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+    }
   </style>
 </head>
 
@@ -95,8 +129,27 @@
             <p id="motivasi" class="text-lg font-bold leading-tight tracking-tight text-white"></p>
             <div class="flex items-end justify-between gap-3">
               <p class="text-gold-subtle text-base font-normal leading-normal" id="motivasiAuthor"></p>
+              <button onclick="testNotification()" class="text-xs text-primary underline hover:no-underline">
+                Tes Notifikasi
+              </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Notification Status -->
+      <div id="notificationStatus" class="rounded-xl border border-gold-subtle/30 bg-[#201d12] p-4 hidden">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span id="statusIcon" class="material-symbols-outlined text-2xl">info</span>
+            <div>
+              <p id="statusTitle" class="text-base font-medium text-white">Status Notifikasi</p>
+              <p id="statusMessage" class="text-sm text-gray-400">Memeriksa...</p>
+            </div>
+          </div>
+          <button onclick="requestNotificationPermission(true)" class="px-3 py-1 bg-primary text-background-dark rounded-lg text-sm font-medium">
+            Aktifkan
+          </button>
         </div>
       </div>
 
@@ -171,6 +224,15 @@
             <button id="priorityHigh" class="priority-btn flex items-center justify-center rounded-lg border border-primary/40 bg-black/20 p-3 h-14 text-sm font-semibold text-white hover:bg-primary/20 transition-colors" data-priority="tinggi">Tinggi</button>
           </div>
         </div>
+
+        <!-- Reminder Toggle -->
+        <div class="flex items-center justify-between py-2">
+          <p class="text-primary text-base font-medium leading-normal">Aktifkan Pengingat</p>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input id="reminderToggle" checked type="checkbox" class="sr-only peer">
+            <div class="w-14 h-7 bg-black/20 peer-focus:outline-none rounded-full peer dark:bg-black/30 peer-checked:after:translate-x-full peer-checked:after:border-primary rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[4px] after:start-[4px] after:bg-white dark:after:bg-gray-800 after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+          </label>
+        </div>
       </main>
 
       <!-- Save Button -->
@@ -182,10 +244,14 @@
     </div>
   </div>
 
+  <!-- Web Alert Container -->
+  <div id="webAlertContainer"></div>
+
   <script>
     // VARIABLES GLOBAL
     let editIndex = null;
     let currentPriority = 'sedang';
+    let enableReminders = true;
 
     // MOTIVASI OTOMATIS
     const motivasiList = [
@@ -205,6 +271,198 @@
 
     function saveTasks(tasks) {
       localStorage.setItem("tasks", JSON.stringify(tasks));
+    }
+
+    // WEB ALERT SYSTEM
+    function showWebAlert(title, message, type = 'info') {
+      const alertContainer = document.getElementById('webAlertContainer');
+      const alertId = 'alert-' + Date.now();
+      
+      const typeConfig = {
+        info: { bg: 'bg-blue-600', icon: 'info' },
+        success: { bg: 'bg-green-600', icon: 'check_circle' },
+        warning: { bg: 'bg-yellow-600', icon: 'warning' },
+        error: { bg: 'bg-red-600', icon: 'error' }
+      };
+      
+      const config = typeConfig[type] || typeConfig.info;
+      
+      const alertHTML = `
+        <div id="${alertId}" class="web-alert ${config.bg} text-white p-4 rounded-lg shadow-lg">
+          <div class="flex items-center gap-3">
+            <span class="material-symbols-outlined">${config.icon}</span>
+            <div class="flex-1">
+              <p class="font-semibold">${title}</p>
+              <p class="text-sm opacity-90">${message}</p>
+            </div>
+            <button onclick="closeWebAlert('${alertId}')" class="text-white hover:text-gray-200">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+      `;
+      
+      alertContainer.insertAdjacentHTML('beforeend', alertHTML);
+      
+      // Auto remove after 5 seconds
+      setTimeout(() => {
+        closeWebAlert(alertId);
+      }, 5000);
+    }
+
+    function closeWebAlert(alertId) {
+      const alert = document.getElementById(alertId);
+      if (alert) {
+        alert.classList.add('hide');
+        setTimeout(() => {
+          alert.remove();
+        }, 300);
+      }
+    }
+
+    // NOTIFICATION SYSTEM - IMPROVED FOR MOBILE
+    async function requestNotificationPermission(showAlert = false) {
+      if (!('Notification' in window)) {
+        if (showAlert) {
+          showWebAlert('Tidak Didukung', 'Browser ini tidak mendukung notifikasi', 'error');
+        }
+        return false;
+      }
+
+      if (Notification.permission === 'granted') {
+        if (showAlert) {
+          showWebAlert('Berhasil', 'Notifikasi sudah diaktifkan!', 'success');
+        }
+        updateNotificationStatus();
+        return true;
+      }
+
+      if (Notification.permission === 'denied') {
+        if (showAlert) {
+          showWebAlert('Izin Ditolak', 
+            'Izin notifikasi ditolak. Buka pengaturan browser untuk mengaktifkannya.', 
+            'error');
+        }
+        updateNotificationStatus();
+        return false;
+      }
+
+      try {
+        const permission = await Notification.requestPermission();
+        const granted = permission === 'granted';
+        
+        if (showAlert) {
+          if (granted) {
+            showWebAlert('Berhasil', 'Notifikasi berhasil diaktifkan!', 'success');
+            // Test notification immediately
+            setTimeout(() => testNotification(), 1000);
+          } else {
+            showWebAlert('Dibatalkan', 'Izin notifikasi diperlukan untuk pengingat tugas', 'warning');
+          }
+        }
+        
+        updateNotificationStatus();
+        return granted;
+      } catch (error) {
+        console.log('Error meminta izin notifikasi:', error);
+        if (showAlert) {
+          showWebAlert('Error', 'Gagal meminta izin notifikasi', 'error');
+        }
+        return false;
+      }
+    }
+
+    function updateNotificationStatus() {
+      const statusElement = document.getElementById('notificationStatus');
+      const statusIcon = document.getElementById('statusIcon');
+      const statusTitle = document.getElementById('statusTitle');
+      const statusMessage = document.getElementById('statusMessage');
+      
+      if (!('Notification' in window)) {
+        statusElement.classList.remove('hidden');
+        statusIcon.textContent = 'do_not_disturb';
+        statusIcon.className = 'material-symbols-outlined text-2xl text-red-500';
+        statusTitle.textContent = 'Tidak Didukung';
+        statusMessage.textContent = 'Browser tidak mendukung notifikasi';
+        return;
+      }
+      
+      switch(Notification.permission) {
+        case 'granted':
+          statusElement.classList.add('hidden');
+          break;
+        case 'denied':
+          statusElement.classList.remove('hidden');
+          statusIcon.textContent = 'block';
+          statusIcon.className = 'material-symbols-outlined text-2xl text-red-500';
+          statusTitle.textContent = 'Izin Ditolak';
+          statusMessage.textContent = 'Akses notifikasi ditolak di pengaturan browser';
+          break;
+        case 'default':
+          statusElement.classList.remove('hidden');
+          statusIcon.textContent = 'notifications_off';
+          statusIcon.className = 'material-symbols-outlined text-2xl text-yellow-500';
+          statusTitle.textContent = 'Belum Diaktifkan';
+          statusMessage.textContent = 'Aktifkan notifikasi untuk pengingat tugas';
+          break;
+      }
+    }
+
+    function showNotification(title, body) {
+      // Always show web alert
+      showWebAlert(title, body, 'info');
+      
+      // Try browser notification if permission granted
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          const options = {
+            body: body,
+            icon: '/icon-192.png',
+            badge: '/icon-192.png',
+            tag: 'daily-remind',
+            requireInteraction: true,
+            vibrate: [200, 100, 200] // Vibrate pattern for mobile
+          };
+
+          // For mobile devices, use service worker if available
+          if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.ready.then(registration => {
+              registration.showNotification(title, options);
+            }).catch(error => {
+              // Fallback to regular notification
+              new Notification(title, options);
+            });
+          } else {
+            // Fallback for desktop and mobile without service worker
+            new Notification(title, options);
+          }
+        } catch (error) {
+          console.log('Error showing notification:', error);
+          // Web alert already shown, so user still gets the message
+        }
+      }
+    }
+
+    function testNotification() {
+      if (!('Notification' in window)) {
+        showWebAlert('Tes Notifikasi', 'Browser tidak mendukung notifikasi', 'error');
+        return;
+      }
+
+      if (Notification.permission !== 'granted') {
+        showWebAlert('Tes Notifikasi', 
+          'Harap aktifkan notifikasi terlebih dahulu', 'warning');
+        requestNotificationPermission(true);
+        return;
+      }
+
+      // Show test notification
+      showNotification(
+        'Daily Remind - Tes', 
+        'Ini adalah notifikasi tes. Notifikasi berfungsi dengan baik! 🎉'
+      );
+      
+      showWebAlert('Tes Notifikasi', 'Notifikasi tes dikirim!', 'success');
     }
 
     function setPriority(priority) {
@@ -243,6 +501,8 @@
       document.getElementById('taskTime').value = nextHour.toISOString().slice(0, 16);
       
       setPriority('sedang');
+      document.getElementById('reminderToggle').checked = true;
+      enableReminders = true;
       document.getElementById('taskModal').classList.remove('hidden');
     }
 
@@ -257,12 +517,13 @@
       // Format time for datetime-local input
       let timeValue = task.time;
       if (timeValue && !timeValue.includes('T')) {
-        // Convert from display format to input format if needed
         timeValue = timeValue.replace(' ', 'T');
       }
       document.getElementById('taskTime').value = timeValue;
       
       setPriority(task.priority || 'sedang');
+      document.getElementById('reminderToggle').checked = task.enableReminders !== false;
+      enableReminders = task.enableReminders !== false;
       document.getElementById('taskModal').classList.remove('hidden');
     }
 
@@ -275,7 +536,7 @@
       const time = document.getElementById("taskTime").value;
 
       if (!title || !time) {
-        alert("Isi semua kolom!");
+        showWebAlert('Error', 'Isi semua kolom!', 'error');
         return;
       }
 
@@ -288,16 +549,21 @@
           time, 
           priority: currentPriority,
           notified: false,
+          enableReminders: enableReminders,
+          remindersSent: [],
           createdAt: new Date().toISOString()
         });
+        showWebAlert('Berhasil', 'Tugas berhasil ditambahkan!', 'success');
       } else {
         // Update existing task
         tasks[editIndex] = { 
           ...tasks[editIndex],
           title, 
           time, 
-          priority: currentPriority
+          priority: currentPriority,
+          enableReminders: enableReminders
         };
+        showWebAlert('Berhasil', 'Tugas berhasil diperbarui!', 'success');
       }
       
       saveTasks(tasks);
@@ -311,6 +577,7 @@
         tasks.splice(index, 1);
         saveTasks(tasks);
         renderTasks();
+        showWebAlert('Berhasil', 'Tugas berhasil dihapus!', 'success');
       }
     }
 
@@ -319,6 +586,9 @@
       tasks[index].notified = !tasks[index].notified;
       saveTasks(tasks);
       renderTasks();
+      
+      const status = tasks[index].notified ? 'diselesaikan' : 'dibuka kembali';
+      showWebAlert('Tugas Diupdate', `Tugas "${tasks[index].title}" ${status}`, 'info');
     }
 
     function getPriorityColor(priority) {
@@ -385,6 +655,7 @@
               <p class="text-base font-medium leading-normal ${task.notified ? 'text-white/50 line-through' : 'text-white'}">${task.title}</p>
               <p class="text-sm font-normal leading-normal ${getPriorityColor(task.priority)}">${getPriorityText(task.priority)}</p>
               <p class="text-xs text-gray-400 mt-1">${formatDateTime(task.time)}</p>
+              ${task.enableReminders === false ? '<p class="text-xs text-yellow-500 mt-1">🔕 Pengingat dimatikan</p>' : ''}
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -430,6 +701,76 @@
       });
     }
 
+    function checkReminders() {
+      const tasks = getTasks();
+      const now = new Date().getTime();
+      let needsSave = false;
+
+      tasks.forEach((task, index) => {
+        // Skip if task is completed or reminders disabled
+        if (task.notified || task.enableReminders === false) return;
+
+        const taskTime = new Date(task.time).getTime();
+        const timeDiff = taskTime - now;
+        
+        // Define reminder intervals in milliseconds
+        const intervals = {
+          '3_hari': 3 * 24 * 60 * 60 * 1000,
+          '1_hari': 24 * 60 * 60 * 1000,
+          '12_jam': 12 * 60 * 60 * 1000,
+          '3_jam': 3 * 60 * 60 * 1000,
+          '1_jam': 60 * 60 * 1000,
+          'tenggat': 0
+        };
+
+        // Check each reminder interval
+        for (const [interval, ms] of Object.entries(intervals)) {
+          if (timeDiff <= ms && timeDiff > ms - 60000) { // 1 minute window
+            if (!task.remindersSent) task.remindersSent = [];
+            
+            if (!task.remindersSent.includes(interval)) {
+              let message = '';
+              switch(interval) {
+                case '3_hari':
+                  message = `Tugas "${task.title}" jatuh tempo dalam 3 hari!`;
+                  break;
+                case '1_hari':
+                  message = `Tugas "${task.title}" jatuh tempo besok!`;
+                  break;
+                case '12_jam':
+                  message = `Tugas "${task.title}" jatuh tempo dalam 12 jam!`;
+                  break;
+                case '3_jam':
+                  message = `Tugas "${task.title}" jatuh tempo dalam 3 jam!`;
+                  break;
+                case '1_jam':
+                  message = `Tugas "${task.title}" jatuh tempo dalam 1 jam!`;
+                  break;
+                case 'tenggat':
+                  message = `⏰ WAKTUNYA! Tugas "${task.title}" sekarang jatuh tempo!`;
+                  break;
+              }
+
+              showNotification('Daily Remind', message);
+              
+              task.remindersSent.push(interval);
+              needsSave = true;
+
+              // Mark as notified if it's the deadline
+              if (interval === 'tenggat') {
+                task.notified = true;
+              }
+            }
+          }
+        }
+      });
+
+      if (needsSave) {
+        saveTasks(tasks);
+        renderTasks();
+      }
+    }
+
     function initializeApp() {
       // Set current date
       const now = new Date();
@@ -453,6 +794,11 @@
         };
       });
 
+      // Reminder toggle
+      document.getElementById('reminderToggle').onchange = function() {
+        enableReminders = this.checked;
+      };
+
       // Close modal when clicking outside
       document.getElementById('taskModal').onclick = function(e) {
         if (e.target === this) {
@@ -463,37 +809,24 @@
       // Initial render
       renderTasks();
 
-      // NOTIFIKASI
-      if (Notification.permission !== "granted") {
-        Notification.requestPermission();
-      }
+      // Initialize notifications
+      updateNotificationStatus();
 
-      // Check notifications every 30 seconds
-      setInterval(() => {
-        const tasks = getTasks();
-        const now = new Date().getTime();
+      // Check reminders every minute
+      setInterval(checkReminders, 60000);
 
-        tasks.forEach((task, index) => {
-          const taskTime = new Date(task.time).getTime();
+      // Also check immediately
+      checkReminders();
 
-          if (!task.notified && now >= taskTime) {
-            if (Notification.permission === "granted") {
-              new Notification("Daily Remind", { 
-                body: `Waktunya: ${task.title}`,
-                icon: '/icon.png'
-              });
-            }
-            tasks[index].notified = true;
-          }
-        });
-
-        saveTasks(tasks);
-        renderTasks();
-      }, 30000);
-
-      // REGISTER SERVICE WORKER
+      // REGISTER SERVICE WORKER for better mobile notifications
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("service-worker.js");
+        navigator.serviceWorker.register("service-worker.js")
+          .then(registration => {
+            console.log('Service Worker terdaftar dengan sukses:', registration);
+          })
+          .catch(error => {
+            console.log('Pendaftaran Service Worker gagal:', error);
+          });
       }
     }
 
